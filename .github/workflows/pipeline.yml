@@ -1,0 +1,120 @@
+# LAB 2 · Pipeline de despliegue de CitaYa.
+# Copia este archivo a .github/workflows/pipeline.yml
+#
+#   1 · commit  →  2 · build  →  3 · aceptación  →  4 · producción  →  5 · verificación
+#   (lint+unit)    (artefacto)    (sobre el         (aprobación       (humo contra la
+#                                  artefacto)         manual + Pages)   URL pública)
+#
+# Build once, deploy many: el artefacto "citaya-dist" se construye UNA vez y es el
+# mismo que se prueba en aceptación y el mismo que llega a producción.
+name: pipeline
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Nunca dos despliegues a la vez sobre la misma rama; no se cancela uno a medias.
+concurrency:
+  group: pipeline-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  commit:
+    name: 1 · commit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Lint
+        run: npm run lint
+      - name: Pruebas unitarias
+        run: npm test
+
+  build:
+    name: 2 · build
+    needs: commit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Construir el artefacto (dist + version.json)
+        run: npm run build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: citaya-dist
+          path: dist
+          retention-days: 30
+
+  aceptacion:
+    name: 3 · aceptación
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Descargar EL MISMO artefacto
+        uses: actions/download-artifact@v4
+        with:
+          name: citaya-dist
+          path: dist
+      - name: Servir el artefacto y lanzar las pruebas de aceptación
+        env:
+          BASE_URL: http://localhost:8080
+        run: |
+          node scripts/serve.js dist 8080 &
+          sleep 1
+          npm run test:aceptacion
+
+  produccion:
+    name: 4 · producción
+    needs: aceptacion
+    # Solo se despliega desde main. En un pull request el pipeline llega hasta aceptación.
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    # Si el entorno github-pages tiene "Required reviewers", aquí el pipeline espera tu aprobación.
+    environment:
+      name: github-pages
+      url: ${{ steps.despliegue.outputs.page_url }}
+    outputs:
+      url: ${{ steps.despliegue.outputs.page_url }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: citaya-dist
+          path: dist
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+      - name: Desplegar en GitHub Pages
+        id: despliegue
+        uses: actions/deploy-pages@v4
+
+  verificacion:
+    name: 5 · verificación
+    needs: produccion
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Pruebas de humo contra producción
+        env:
+          BASE_URL: ${{ needs.produccion.outputs.url }}
+          EXPECTED_SHA: ${{ github.sha }}
+        run: npm run test:humo
