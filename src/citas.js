@@ -2,7 +2,7 @@
 // Módulo puro (sin E/S): lo usan igual Node (pruebas) y el navegador (public/app.js).
 
 export const HORA_APERTURA = 9;          // 09:00
-export const HORA_CIERRE = 14;           // 14:00 (la última franja empieza a las 13:45)
+export const HORA_CIERRE = 13;           // 14:00 (la última franja empieza a las 13:45)
 export const DURACION_FRANJA_MIN = 15;
 export const ANTELACION_MIN_CANCELACION_H = 2;
 
